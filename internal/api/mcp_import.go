@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -214,8 +215,8 @@ func discoverMCPTools(ctx context.Context, hubVersion, serverURL string, headers
 	if err != nil && shouldFallbackToSSE(ctx, err) {
 		slog.Info("mcp import: retrying with SSE transport", "url", serverURL)
 		retryCtx, retryCancel := context.WithTimeout(ctx, perAttemptTimeout)
+		defer retryCancel()
 		result, err = runDiscovery(retryCtx, hubVersion, serverURL, headers, httpClient, transportSSE)
-		retryCancel()
 	}
 	return result, err
 }
@@ -301,6 +302,9 @@ func runDiscovery(ctx context.Context, hubVersion, serverURL string, headers map
 	if lerr != nil {
 		return nil, wrapTransportError("list_tools", lerr)
 	}
+	if toolsResult == nil {
+		return result, nil
+	}
 
 	for i, t := range toolsResult.Tools {
 		if i >= maxImportTools {
@@ -326,21 +330,42 @@ func runDiscovery(ctx context.Context, hubVersion, serverURL string, headers map
 
 // isLegacySSESignal reports whether the error indicates the server speaks the
 // legacy SSE transport instead of Streamable HTTP, so discovery should retry.
-// Triggers on either mcp-go's explicit "legacy sse" hint, or an HTTP 405/406
-// from the Streamable HTTP initialize POST, which the spec flags as the
-// signal to fall back.
+// Triggers on mcp-go's explicit "legacy sse" hint, an HTTP 405/406 from the
+// Streamable HTTP initialize POST (per MCP spec), or the equivalent textual
+// phrases when no numeric status is surfaced in the wrapped error.
 func isLegacySSESignal(err error) bool {
 	if err == nil {
 		return false
 	}
 	low := strings.ToLower(err.Error())
-	if strings.Contains(low, "legacy sse") {
+	if strings.Contains(low, "legacy sse") ||
+		strings.Contains(low, "method not allowed") ||
+		strings.Contains(low, "not acceptable") {
 		return true
 	}
 	if m := findHTTPStatus(low); m == "405" || m == "406" {
 		return true
 	}
 	return false
+}
+
+// isTimeoutErr classifies an error as a transport-level timeout, covering
+// context deadlines, net.Error(Timeout), and Go's ResponseHeaderTimeout
+// message which does not wrap context.DeadlineExceeded.
+func isTimeoutErr(err error, lowerMsg string) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return strings.Contains(lowerMsg, "deadline exceeded") ||
+		strings.Contains(lowerMsg, "timeout awaiting response headers") ||
+		strings.Contains(lowerMsg, "i/o timeout")
 }
 
 // wrapTransportError classifies a network/protocol error into an importError
@@ -350,7 +375,7 @@ func wrapTransportError(stage string, err error) error {
 	low := strings.ToLower(msg)
 
 	switch {
-	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(low, "deadline exceeded"):
+	case isTimeoutErr(err, low):
 		return &importError{Stage: "timeout", Detail: "MCP server did not respond in time", Err: err}
 	case strings.Contains(low, "private/internal"):
 		return &importError{Stage: "blocked", Detail: "MCP server resolves to a private/internal IP and was blocked", Err: err}
