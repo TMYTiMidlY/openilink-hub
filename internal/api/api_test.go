@@ -271,8 +271,9 @@ func TestBotAPI_ScopeChecks(t *testing.T) {
 	})
 
 	t.Run("disabled installation returns 403", func(t *testing.T) {
-		// Disable the installation.
-		_ = env.store.UpdateInstallation(instMsgOnly.ID, instMsgOnly.Handle, instMsgOnly.Config, instMsgOnly.Scopes, false, false)
+		// Disable the installation. Preserve ReplyPrefixHandle so this subtest
+		// only toggles the Enabled bit (matches the WS test pattern).
+		_ = env.store.UpdateInstallation(instMsgOnly.ID, instMsgOnly.Handle, instMsgOnly.Config, instMsgOnly.Scopes, false, instMsgOnly.ReplyPrefixHandle)
 
 		resp := doJSON(t, env.ts, "POST", "/bot/v1/message/send",
 			map[string]string{"content": "hello"},
@@ -283,7 +284,7 @@ func TestBotAPI_ScopeChecks(t *testing.T) {
 		}
 
 		// Re-enable for other tests.
-		_ = env.store.UpdateInstallation(instMsgOnly.ID, instMsgOnly.Handle, instMsgOnly.Config, instMsgOnly.Scopes, true, false)
+		_ = env.store.UpdateInstallation(instMsgOnly.ID, instMsgOnly.Handle, instMsgOnly.Config, instMsgOnly.Scopes, true, instMsgOnly.ReplyPrefixHandle)
 	})
 }
 
