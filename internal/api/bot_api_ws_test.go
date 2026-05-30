@@ -121,7 +121,7 @@ func TestBotAPIWebSocket_Connect(t *testing.T) {
 	})
 
 	t.Run("connect with disabled installation", func(t *testing.T) {
-		_ = srv.Store.UpdateInstallation(inst.ID, inst.Handle, inst.Config, inst.Scopes, false)
+		_ = srv.Store.UpdateInstallation(inst.ID, inst.Handle, inst.Config, inst.Scopes, false, false)
 
 		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/bot/v1/ws?token=" + inst.AppToken
 		_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -133,7 +133,7 @@ func TestBotAPIWebSocket_Connect(t *testing.T) {
 		}
 
 		// Re-enable
-		_ = srv.Store.UpdateInstallation(inst.ID, inst.Handle, inst.Config, inst.Scopes, true)
+		_ = srv.Store.UpdateInstallation(inst.ID, inst.Handle, inst.Config, inst.Scopes, true, false)
 	})
 }
 
