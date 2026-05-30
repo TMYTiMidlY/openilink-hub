@@ -263,17 +263,23 @@ export function InstallationDetailPage() {
             {app.description ? (
               <p className="text-sm text-muted-foreground">{app.description}</p>
             ) : null}
-            {/* Secondary toggle row: reply-prefix opt-in (#248) */}
+            {/* Secondary toggle row: reply-prefix opt-in (#248). Disabled
+                when handle is empty since the backend short-circuits and
+                wouldn't actually prepend anything. */}
             <div className="flex items-center gap-2 pt-1">
               <Switch
-                checked={replyPrefixHandle}
+                checked={replyPrefixHandle && !!handle}
                 onCheckedChange={handleToggleReplyPrefix}
-                disabled={prefixPending}
+                disabled={prefixPending || !handle}
                 aria-label="回复时带 @handle 前缀"
               />
               <span className="text-sm text-muted-foreground">
                 回复时带 <code className="font-mono">@{handle || "handle"}</code> 前缀
-                <span className="ml-1 text-xs">（多 channel 时区分来源）</span>
+                {handle ? (
+                  <span className="ml-1 text-xs">（多 channel 时区分来源）</span>
+                ) : (
+                  <span className="ml-1 text-xs">（先设置 handle 后可启用）</span>
+                )}
               </span>
             </div>
           </div>

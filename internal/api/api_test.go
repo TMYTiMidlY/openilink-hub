@@ -152,10 +152,13 @@ func installTestApp(t *testing.T, s store.Store, appID, botID string) *store.App
 	if err != nil {
 		t.Fatalf("InstallApp: %v", err)
 	}
-	// Snapshot app scopes at install time (Slack model)
+	// Snapshot app scopes at install time (Slack model). Fail fast so the
+	// helper never hands back an installation with stale scopes.
 	app, err := s.GetApp(appID)
 	if err == nil && app != nil && len(app.Scopes) > 0 {
-		_ = s.UpdateInstallation(inst.ID, inst.Handle, inst.Config, app.Scopes, inst.Enabled, inst.ReplyPrefixHandle)
+		if err := s.UpdateInstallation(inst.ID, inst.Handle, inst.Config, app.Scopes, inst.Enabled, inst.ReplyPrefixHandle); err != nil {
+			t.Fatalf("installTestApp: snapshot scopes: %v", err)
+		}
 		inst.Scopes = app.Scopes
 	}
 	return inst
