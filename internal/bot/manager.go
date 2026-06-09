@@ -27,10 +27,10 @@ type Manager struct {
 	instances map[string]*Instance
 	store     store.Store
 	hub       *relay.Hub
-	aiSink    *sink.AI            // AI sink (bot-level)
-	storage   storage.Store       // optional, for media files
-	baseURL   string              // Hub origin for proxy URLs
-	dlSem     chan struct{}        // semaphore for concurrent media downloads
+	aiSink    *sink.AI                // AI sink (bot-level)
+	storage   storage.Store           // optional, for media files
+	baseURL   string                  // Hub origin for proxy URLs
+	dlSem     chan struct{}           // semaphore for concurrent media downloads
 	appDisp   *appdelivery.Dispatcher // app event delivery
 	appWSHub  *appdelivery.WSHub      // app WebSocket connections
 	pushHub   *push.Hub               // browser push WebSocket
@@ -457,7 +457,7 @@ func (m *Manager) buildDBMessage(botDBID string, channelID *string, msg provider
 		ToUserID:     msg.Recipient,
 		CreateTimeMs: &msg.Timestamp,
 		SessionID:    msg.SessionID,
-		GroupID:       msg.GroupID,
+		GroupID:      msg.GroupID,
 		MessageState: msg.MessageState,
 		ItemList:     itemList,
 		ContextToken: msg.ContextToken,
@@ -647,7 +647,6 @@ func (m *Manager) downloadMedia(inst *Instance, msg provider.InboundMessage, msg
 	slog.Info("media download done", "bot", inst.DBID, "msg", msg.ExternalID, "status", status)
 }
 
-
 // deliverToAI runs the AI sink at bot level, independent of channel matching.
 func (m *Manager) deliverToAI(inst *Instance, msg provider.InboundMessage, p parsedMessage, msgID int64, tracer *store.Tracer, rootSpan *store.SpanBuilder) {
 	if m.aiSink == nil || !inst.AIEnabled {
@@ -748,39 +747,52 @@ func (m *Manager) processMedia(inst *Instance, msg *provider.InboundMessage) map
 			q.Set("eqp", item.Media.EncryptQueryParam)
 			q.Set("aes", item.Media.AESKey)
 			q.Set("ct", mediaContentType(item.Type))
+			if item.Type == "voice" && item.Media.SampleRate > 0 {
+				q.Set("sr", fmt.Sprintf("%d", item.Media.SampleRate))
+			}
 			item.Media.URL = fmt.Sprintf("%s/api/v1/channels/media?%s", m.baseURL, q.Encode())
 		}
 	}
 	return silkKeys
 }
 
-// downloadVoiceWithFallback tries SILK decode at 24kHz, then with item's SampleRate, then raw file.
+// downloadVoiceWithFallback tries the provider's sample rate first, then common
+// WeChat voice rates, and finally stores the raw file if decoding still fails.
 func (m *Manager) downloadVoiceWithFallback(ctx context.Context, inst *Instance, item *provider.MessageItem) ([]byte, error) {
-	// Try 1: SILK decode at 24kHz (most common)
-	data, err := inst.Provider.DownloadVoice(ctx, item.Media, 24000)
-	if err == nil {
-		slog.Info("voice decoded", "rate", 24000)
-		return data, nil
+	var lastErr error
+	for _, rate := range voiceSampleRates(item.Media.SampleRate) {
+		data, err := inst.Provider.DownloadVoice(ctx, item.Media, rate)
+		if err == nil {
+			slog.Info("voice decoded", "rate", rate)
+			return data, nil
+		}
+		lastErr = err
+		slog.Warn("voice decode failed, trying fallback", "rate", rate, "err", err)
 	}
-	slog.Warn("voice decode 24kHz failed, trying fallback", "err", err)
+	slog.Warn("voice decode failed, storing raw", "err", lastErr)
 
-	// Try 2: SILK decode at 16kHz
-	data, err = inst.Provider.DownloadVoice(ctx, item.Media, 16000)
-	if err == nil {
-		slog.Info("voice decoded", "rate", 16000)
-		return data, nil
-	}
-	slog.Warn("voice decode 16kHz failed, storing raw", "err", err)
-
-	// Try 3: store raw file (SILK or whatever format)
-	data, err = inst.Provider.DownloadMedia(ctx, item.Media)
+	data, err := inst.Provider.DownloadMedia(ctx, item.Media)
 	if err != nil {
 		return nil, err
 	}
-	// Change extension to .silk since we couldn't decode
+	// Keep the raw file available when SILK decoding fails.
 	item.Type = "file"
 	slog.Info("voice stored as raw file")
 	return data, nil
+}
+
+func voiceSampleRates(preferred int) []int {
+	candidates := []int{preferred, 24000, 16000, 8000, 48000}
+	rates := make([]int, 0, len(candidates))
+	seen := map[int]bool{}
+	for _, rate := range candidates {
+		if rate <= 0 || seen[rate] {
+			continue
+		}
+		seen[rate] = true
+		rates = append(rates, rate)
+	}
+	return rates
 }
 
 func mediaExt(itemType string) string {
@@ -811,7 +823,6 @@ func mediaContentType(itemType string) string {
 	}
 }
 
-
 func convertRelayItem(item provider.MessageItem) relay.MessageItem {
 	ri := relay.MessageItem{
 		Type:     item.Type,
@@ -826,6 +837,7 @@ func convertRelayItem(item provider.MessageItem) relay.MessageItem {
 			FileSize:    item.Media.FileSize,
 			MediaType:   item.Media.MediaType,
 			PlayTime:    item.Media.PlayTime,
+			SampleRate:  item.Media.SampleRate,
 			PlayLength:  item.Media.PlayLength,
 			ThumbWidth:  item.Media.ThumbWidth,
 			ThumbHeight: item.Media.ThumbHeight,

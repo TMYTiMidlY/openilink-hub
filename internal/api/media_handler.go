@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/openilink/openilink-hub/internal/auth"
@@ -84,16 +86,29 @@ func (s *Server) handleChannelMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveChannelMedia(w http.ResponseWriter, r *http.Request, inst *bot.Instance, eqp, aes string) {
-	data, err := inst.Provider.DownloadMedia(r.Context(), &provider.Media{
+	media := &provider.Media{
 		EncryptQueryParam: eqp,
 		AESKey:            aes,
-	})
+	}
+	ctHint := r.URL.Query().Get("ct")
+	sampleRate, _ := strconv.Atoi(r.URL.Query().Get("sr"))
+
+	var data []byte
+	var err error
+	if strings.HasPrefix(ctHint, "audio/wav") || strings.HasPrefix(ctHint, "audio/wave") {
+		data, err = downloadVoiceWithFallback(r, inst, media, sampleRate)
+	} else {
+		data, err = inst.Provider.DownloadMedia(r.Context(), media)
+	}
 	if err != nil {
 		http.Error(w, "download failed", http.StatusBadGateway)
 		return
 	}
 
 	ct := http.DetectContentType(data)
+	if strings.HasPrefix(ctHint, "audio/wav") || strings.HasPrefix(ctHint, "audio/wave") {
+		ct = "audio/wav"
+	}
 	safe := (strings.HasPrefix(ct, "image/") && ct != "image/svg+xml") ||
 		strings.HasPrefix(ct, "audio/") || strings.HasPrefix(ct, "video/")
 	if !safe {
@@ -103,6 +118,33 @@ func (s *Server) serveChannelMedia(w http.ResponseWriter, r *http.Request, inst 
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Write(data)
+}
+
+func downloadVoiceWithFallback(r *http.Request, inst *bot.Instance, media *provider.Media, preferred int) ([]byte, error) {
+	var lastErr error
+	for _, rate := range voiceSampleRates(preferred) {
+		data, err := inst.Provider.DownloadVoice(r.Context(), media, rate)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		slog.Warn("voice proxy decode failed", "rate", rate, "err", err)
+	}
+	return nil, lastErr
+}
+
+func voiceSampleRates(preferred int) []int {
+	candidates := []int{preferred, 24000, 16000, 8000, 48000}
+	rates := make([]int, 0, len(candidates))
+	seen := map[int]bool{}
+	for _, rate := range candidates {
+		if rate <= 0 || seen[rate] {
+			continue
+		}
+		seen[rate] = true
+		rates = append(rates, rate)
+	}
+	return rates
 }
 
 // GET /api/v1/media/{key...}

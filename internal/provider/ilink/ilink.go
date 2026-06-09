@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	ilink "github.com/openilink/openilink-sdk-go"
 	"github.com/openilink/openilink-hub/internal/provider"
+	ilink "github.com/openilink/openilink-sdk-go"
 	"github.com/youthlin/silk"
 )
 
@@ -449,6 +449,7 @@ func convertItem(item ilink.MessageItem) *provider.MessageItem {
 			mi.Media = convertCDNMedia(item.VoiceItem.Media, "voice")
 			if mi.Media != nil {
 				mi.Media.PlayTime = item.VoiceItem.PlayTime
+				mi.Media.SampleRate = item.VoiceItem.SampleRate
 			}
 		}
 

@@ -89,7 +89,8 @@ type Media struct {
 	FileSize          int64  `json:"file_size,omitempty"`
 	MediaType         string `json:"media_type,omitempty"` // "image", "voice", "file", "video"
 	// Voice-specific
-	PlayTime int `json:"play_time,omitempty"` // seconds
+	PlayTime   int `json:"play_time,omitempty"` // seconds
+	SampleRate int `json:"sample_rate,omitempty"`
 	// Video/image thumbnail
 	ThumbEQP    string `json:"thumb_eqp,omitempty"`
 	ThumbAESKey string `json:"thumb_aes_key,omitempty"`

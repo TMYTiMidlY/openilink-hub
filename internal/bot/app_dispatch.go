@@ -525,9 +525,11 @@ func resolveItemMedia(item *relay.MessageItem, baseURL, botDBID string) {
 	q.Set("eqp", m.EQP)
 	q.Set("aes", m.AESKey)
 	q.Set("ct", mediaContentType(item.Type))
+	if item.Type == "voice" && m.SampleRate > 0 {
+		q.Set("sr", fmt.Sprintf("%d", m.SampleRate))
+	}
 	m.URL = fmt.Sprintf("%s/api/v1/channels/media?%s", baseURL, q.Encode())
 	m.EQP = ""
 	m.AESKey = ""
 	item.Media = &m
 }
-

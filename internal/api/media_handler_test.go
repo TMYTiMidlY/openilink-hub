@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,9 +24,9 @@ import (
 
 type mockProvider struct{}
 
-func (m *mockProvider) Name() string                          { return "mock" }
+func (m *mockProvider) Name() string                                       { return "mock" }
 func (m *mockProvider) Start(context.Context, provider.StartOptions) error { return nil }
-func (m *mockProvider) Stop()                                 {}
+func (m *mockProvider) Stop()                                              {}
 func (m *mockProvider) Send(context.Context, provider.OutboundMessage) (string, error) {
 	return "", nil
 }
@@ -34,11 +35,13 @@ func (m *mockProvider) GetConfig(context.Context, string, string) (*provider.Bot
 	return nil, nil
 }
 func (m *mockProvider) DownloadMedia(_ context.Context, _ *provider.Media) ([]byte, error) {
-	// Return a tiny PNG so Content-Type detection works
-	return []byte("\x89PNG\r\n\x1a\n" + "fake-image-data"), nil
+	return []byte("#!SILK_V3\nraw-silk-data"), nil
 }
-func (m *mockProvider) DownloadVoice(context.Context, *provider.Media, int) ([]byte, error) {
-	return nil, nil
+func (m *mockProvider) DownloadVoice(_ context.Context, _ *provider.Media, sampleRate int) ([]byte, error) {
+	if sampleRate != 8000 {
+		return nil, fmt.Errorf("unsupported sample rate: %d", sampleRate)
+	}
+	return []byte("RIFF\x24\x00\x00\x00WAVEfmt "), nil
 }
 func (m *mockProvider) Status() string { return "connected" }
 
@@ -312,6 +315,49 @@ func TestChannelMedia_BearerNoScope(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 401 for missing scope, got %d: %s", resp.StatusCode, string(body))
+	}
+}
+
+func TestChannelMedia_VoiceProxyDecodesToWAV(t *testing.T) {
+	ts, _, _, inst := setupMediaTestEnv(t)
+
+	resp, err := doMediaReq(t, ts, "/api/v1/channels/media?eqp=test&aes=test123&ct=audio/wav&sr=8000",
+		"Bearer "+inst.AppToken)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body[:4]) != "RIFF" {
+		t.Fatalf("expected decoded WAV body, got %q", string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "audio/wav" {
+		t.Fatalf("expected audio/wav content type, got %q", ct)
+	}
+}
+
+func TestChannelMedia_VoiceProxyTriesFallbackSampleRates(t *testing.T) {
+	ts, _, _, inst := setupMediaTestEnv(t)
+
+	resp, err := doMediaReq(t, ts, "/api/v1/channels/media?eqp=test&aes=test123&ct=audio/wav",
+		"Bearer "+inst.AppToken)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body[:4]) != "RIFF" {
+		t.Fatalf("expected decoded WAV body after fallback, got %q", string(body))
 	}
 }
 
